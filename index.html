@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>EWI BLE-MIDI Monitor</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; background: #f0f0f0; }
+        #status { font-weight: bold; color: #666; margin-bottom: 20px; }
+        .connected { color: #00aa00 !important; }
+        #log { width: 80%; height: 200px; margin: 20px auto; background: white; padding: 10px; 
+               border-radius: 8px; overflow-y: scroll; text-align: left; font-family: monospace; }
+        button { padding: 15px 30px; font-size: 1.2rem; cursor: pointer; border-radius: 8px; border: none; background: #007bff; color: white; }
+    </style>
+</head>
+<body>
+    <h1>EWI BLE-MIDI Monitor</h1>
+    <div id="status">MIDIデバイスの準備を待機中...</div>
+    <button id="startBtn">MIDI入力を開始する</button>
+    <div id="log">ここに演奏ログが表示されます...<br></div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        const startBtn = document.getElementById('startBtn');
+
+        // ログ表示用関数
+        function addLog(msg) {
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logEl.prepend(div);
+        }
+
+        // MIDIの初期化
+        async function initMIDI() {
+            if (!navigator.requestMIDIAccess) {
+                alert("お使いのブラウザはWeb MIDI APIに対応していません。ChromeやEdgeを使用してください。");
+                return;
+            }
+
+            try {
+                const midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+                statusEl.textContent = "ブラウザのMIDI準備完了。ESP32を接続してください。";
+                
+                // デバイスの状態変化を監視
+                midiAccess.onstatechange = (e) => {
+                    addLog(`デバイス状態変化: ${e.port.name} (${e.port.state})`);
+                    updateDeviceList(midiAccess);
+                };
+
+                updateDeviceList(midiAccess);
+            } catch (err) {
+                statusEl.textContent = "MIDIアクセスに失敗しました: " + err;
+            }
+        }
+
+        function updateDeviceList(midiAccess) {
+            const inputs = midiAccess.inputs.values();
+            let found = false;
+            for (let input of inputs) {
+                addLog(`発見したデバイス: ${input.name}`);
+                input.onmidimessage = handleMIDIMessage;
+                statusEl.textContent = `接続中: ${input.name}`;
+                statusEl.className = "connected";
+                found = true;
+            }
+            if (!found) {
+                statusEl.textContent = "MIDIデバイスが見つかりません。OSの設定でペアリングしてください。";
+                statusEl.className = "";
+            }
+        }
+
+        function handleMIDIMessage(event) {
+            const [status, data1, data2] = event.data;
+            const command = status & 0xf0;
+            const channel = (status & 0x0f) + 1;
+
+            if (command === 0x90 && data2 > 0) { // Note ON
+                addLog(`🎵 Note ON: ${data1} (Vol: ${data2})`);
+            } else if (command === 0x80 || (command === 0x90 && data2 === 0)) { // Note OFF
+                addLog(`静止: Note OFF: ${data1}`);
+            } else if (command === 0xb0) { // Control Change
+                if (data1 === 2) { // CC#2 Breath
+                    addLog(`💨 Breath (CC#2): ${data2}`);
+                }
+            }
+        }
+
+        startBtn.onclick = () => {
+            initMIDI();
+            startBtn.style.display = 'none';
+        };
+    </script>
+</body>
+</html>
